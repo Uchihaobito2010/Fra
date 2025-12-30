@@ -30,8 +30,14 @@ def fragment_lookup(username):
 
         html = r.text.lower()
 
-        # SOLD
-        if "sold" in html:
+        # ---------- STRICT SOLD DETECTION ----------
+        sold_signals = [
+            "this username was sold",
+            "sold for",
+            "final price"
+        ]
+
+        if any(sig in html for sig in sold_signals):
             return {
                 "on_fragment": True,
                 "status": "Sold",
@@ -39,17 +45,17 @@ def fragment_lookup(username):
                 "url": url
             }
 
-        # PRICE (may fail sometimes)
+        # ---------- PRICE (OPTIONAL) ----------
         price = None
         m = re.search(r'([\d,]{3,})\s*ton', html)
         if m:
             price = m.group(1).replace(",", "")
 
-        # STRONG fragment indicators
+        # ---------- LISTED ON FRAGMENT ----------
         fragment_signals = [
             "buy username",
-            "fragment",
-            "ton blockchain"
+            "place a bid",
+            "fragment marketplace"
         ]
 
         if any(sig in html for sig in fragment_signals):
@@ -60,7 +66,7 @@ def fragment_lookup(username):
                 "url": url
             }
 
-        # No fragment signals → claimable
+        # ---------- NOT ON FRAGMENT ----------
         return {"on_fragment": False}
 
     except:
