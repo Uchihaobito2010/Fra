@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
-import requests, re
+import requests
+import re
 
 app = Flask(__name__)
 
@@ -9,7 +10,7 @@ HEADERS = {
     "Referer": "https://fragment.com/"
 }
 
-# ---------- CHECK TELEGRAM ----------
+# ---------------- TELEGRAM CHECK ----------------
 def is_telegram_taken(username: str) -> bool:
     try:
         r = requests.get(
@@ -22,49 +23,54 @@ def is_telegram_taken(username: str) -> bool:
         return False
 
 
-# ---------- CHECK FRAGMENT ----------
+# ---------------- FRAGMENT CHECK ----------------
 def fragment_lookup(username: str):
     try:
         url = f"https://fragment.com/username/{username}"
         r = requests.get(url, headers=HEADERS, timeout=15)
 
         if r.status_code != 200:
-            return None
+            return {"listed": False}
 
-        html = r.text
+        html = r.text.lower()
 
-        # Extract TON price
-        price = None
-        price_match = re.search(r'([\d,]+)\s*TON', html)
+        # SOLD username
+        if "sold" in html:
+            return {
+                "listed": True,
+                "status": "Sold",
+                "price": None,
+                "url": url
+            }
+
+        # AVAILABLE on fragment (price detection)
+        price_match = re.search(r'([\d,]{3,})\s*ton', html)
         if price_match:
-            price = price_match.group(1).replace(",", "")
+            return {
+                "listed": True,
+                "status": "Available",
+                "price": price_match.group(1).replace(",", ""),
+                "url": url
+            }
 
-        # Status
-        status = "Available"
-        if "Sold" in html:
-            status = "Sold"
-
-        return {
-            "price": price,
-            "status": status,
-            "url": url
-        }
+        # Page exists but username NOT listed on fragment
+        return {"listed": False}
 
     except:
-        return None
+        return {"listed": False}
 
 
-# ---------- ROOT ----------
+# ---------------- ROOT ----------------
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "api": "Fragment Username Check API",
+        "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=aotpy",
         "status": "online"
     })
 
 
-# ---------- MAIN ENDPOINT ----------
+# ---------------- MAIN ENDPOINT ----------------
 @app.route("/check", methods=["GET"])
 def check_username():
     username = request.args.get("username", "").replace("@", "").lower()
@@ -72,7 +78,7 @@ def check_username():
     if not username:
         return jsonify({"error": "username parameter required"}), 400
 
-    # Step 1: Telegram check
+    # Step 1: Telegram username taken?
     if is_telegram_taken(username):
         return jsonify({
             "username": f"@{username}",
@@ -83,21 +89,21 @@ def check_username():
             "message": ""
         })
 
-    # Step 2: Fragment check
+    # Step 2: Fragment lookup
     fragment = fragment_lookup(username)
 
-    if fragment:
+    if fragment.get("listed"):
         return jsonify({
             "username": f"@{username}",
-            "price_ton": fragment["price"] or "Unknown",
-            "status": fragment["status"],
+            "price_ton": fragment.get("price") or "Unknown",
+            "status": fragment.get("status"),
             "on_fragment": True,
             "can_claim": False,
-            "message": "Buy from Fragment" if fragment["price"] else "",
-            "fragment_url": fragment["url"]
+            "message": "Buy from Fragment" if fragment.get("price") else "",
+            "fragment_url": fragment.get("url")
         })
 
-    # Step 3: Fully available
+    # Step 3: Fully claimable
     return jsonify({
         "username": f"@{username}",
         "price_ton": "Unknown",
