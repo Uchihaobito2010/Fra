@@ -11,53 +11,60 @@ HEADERS = {
 }
 
 # ---------------- TELEGRAM CHECK ----------------
-def is_telegram_taken(username: str) -> bool:
+def is_telegram_taken(username):
     try:
-        r = requests.get(
-            f"https://t.me/{username}",
-            headers=HEADERS,
-            timeout=10
-        )
+        r = requests.get(f"https://t.me/{username}", headers=HEADERS, timeout=10)
         return r.status_code == 200 and "tgme_page_title" in r.text
     except:
         return False
 
 
 # ---------------- FRAGMENT CHECK ----------------
-def fragment_lookup(username: str):
-    try:
-        url = f"https://fragment.com/username/{username}"
-        r = requests.get(url, headers=HEADERS, timeout=15)
+def fragment_lookup(username):
+    url = f"https://fragment.com/username/{username}"
 
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
-            return {"listed": False}
+            return {"on_fragment": False}
 
         html = r.text.lower()
 
-        # SOLD username
+        # SOLD
         if "sold" in html:
             return {
-                "listed": True,
+                "on_fragment": True,
                 "status": "Sold",
                 "price": None,
                 "url": url
             }
 
-        # AVAILABLE on fragment (price detection)
-        price_match = re.search(r'([\d,]{3,})\s*ton', html)
-        if price_match:
+        # PRICE (may fail sometimes)
+        price = None
+        m = re.search(r'([\d,]{3,})\s*ton', html)
+        if m:
+            price = m.group(1).replace(",", "")
+
+        # STRONG fragment indicators
+        fragment_signals = [
+            "buy username",
+            "fragment",
+            "ton blockchain"
+        ]
+
+        if any(sig in html for sig in fragment_signals):
             return {
-                "listed": True,
+                "on_fragment": True,
                 "status": "Available",
-                "price": price_match.group(1).replace(",", ""),
+                "price": price,
                 "url": url
             }
 
-        # Page exists but username NOT listed on fragment
-        return {"listed": False}
+        # No fragment signals → claimable
+        return {"on_fragment": False}
 
     except:
-        return {"listed": False}
+        return {"on_fragment": False}
 
 
 # ---------------- ROOT ----------------
@@ -65,7 +72,7 @@ def fragment_lookup(username: str):
 def home():
     return jsonify({
         "api": "Telegram Fragment Username Check API",
-        "usage": "/check?username=aotpy",
+        "usage": "/check?username=tobi",
         "status": "online"
     })
 
@@ -74,40 +81,39 @@ def home():
 @app.route("/check", methods=["GET"])
 def check_username():
     username = request.args.get("username", "").replace("@", "").lower()
-
     if not username:
-        return jsonify({"error": "username parameter required"}), 400
+        return jsonify({"error": "username required"}), 400
 
-    # Step 1: Telegram username taken?
+    # 1️⃣ Telegram taken
     if is_telegram_taken(username):
         return jsonify({
             "username": f"@{username}",
-            "price_ton": "Unknown",
             "status": "Taken",
+            "price_ton": "Unknown",
             "on_fragment": False,
             "can_claim": False,
             "message": ""
         })
 
-    # Step 2: Fragment lookup
+    # 2️⃣ Fragment check
     fragment = fragment_lookup(username)
 
-    if fragment.get("listed"):
+    if fragment.get("on_fragment"):
         return jsonify({
             "username": f"@{username}",
-            "price_ton": fragment.get("price") or "Unknown",
             "status": fragment.get("status"),
+            "price_ton": fragment.get("price") or "Unknown",
             "on_fragment": True,
             "can_claim": False,
-            "message": "Buy from Fragment" if fragment.get("price") else "",
+            "message": "Buy from Fragment" if fragment.get("status") == "Available" else "",
             "fragment_url": fragment.get("url")
         })
 
-    # Step 3: Fully claimable
+    # 3️⃣ Claimable
     return jsonify({
         "username": f"@{username}",
-        "price_ton": "Unknown",
         "status": "Available",
+        "price_ton": "Unknown",
         "on_fragment": False,
         "can_claim": True,
         "message": "Can be claimed directly"
