@@ -77,6 +77,10 @@ def fragment_lookup(username):
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
+        "owner": "Paras chourasiya",
+        "Contact": "Telegram = @Aotpy",
+        "Portfolio": "Aotpy.vercel.app",
+        
         "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=tobi",
         "status": "online"
@@ -93,6 +97,9 @@ def check_username():
     # 1️⃣ Telegram taken
     if is_telegram_taken(username):
         return jsonify({
+            "owner": "Paras chourasiya",
+            "if any problem contact": "@Aotpy",
+            
             "username": f"@{username}",
             "status": "Taken",
             "price_ton": "Unknown",
@@ -106,6 +113,9 @@ def check_username():
 
     if fragment.get("on_fragment"):
         return jsonify({
+            "owner": "Paras chourasiya",
+            "if any problem contact": "@Aotpy",
+            
             "username": f"@{username}",
             "status": fragment.get("status"),
             "price_ton": fragment.get("price") or "Unknown",
@@ -117,6 +127,8 @@ def check_username():
 
     # 3️⃣ Claimable
     return jsonify({
+        "owner": "Paras chourasiya",
+        "if any problem contact": "@Aotpy",
         "username": f"@{username}",
         "status": "Available",
         "price_ton": "Unknown",
