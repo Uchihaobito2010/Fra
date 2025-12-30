@@ -78,8 +78,8 @@ def fragment_lookup(username):
 def home():
     return jsonify({
         "owner": "Paras chourasiya",
-        "Contact": "Telegram = @Aotpy",
-        "Portfolio": "Aotpy.vercel.app",
+        "Contact": "t.me/Aotpy",
+        "Portfolio": "https://aotpy.vercel.app/",
         
         "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=tobi",
