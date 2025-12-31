@@ -1,76 +1,83 @@
-from flask import Flask, request, jsonify
+import re
+import time
 import requests
+from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify
+from user_agent import generate_user_agent
 
 app = Flask(__name__)
 
-# ================== HEADERS ==================
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "application/json",
+# ================== SESSION ==================
+session = requests.Session()
+session.headers.update({
+    "User-Agent": generate_user_agent(),
     "Referer": "https://fragment.com/"
-}
+})
 
 # ================== CREDITS ==================
 API_OWNER = "Paras chourasiya"
-CONTACT = "@Aotpy"
+CONTACT = "t.me/Aotpy"
 PORTFOLIO = "https://Aotpy.netlify.app"
 
 
-# ================== TON LIVE RATE ==================
-def get_ton_rate():
+# ================== GET FRAGMENT INTERNAL API ==================
+def get_fragment_api():
     try:
-        r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={
-                "ids": "the-open-network",
-                "vs_currencies": "usd,inr"
-            },
-            timeout=10
-        )
-        data = r.json().get("the-open-network", {})
-        return data.get("usd"), data.get("inr")
+        r = session.get("https://fragment.com", timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        for script in soup.find_all("script"):
+            if script.string and "apiUrl" in script.string:
+                match = re.search(r"hash=([a-fA-F0-9]+)", script.string)
+                if match:
+                    return f"https://fragment.com/api?hash={match.group(1)}"
+        return None
     except:
-        return None, None
+        return None
 
 
-# ================== TELEGRAM CHECK ==================
-def is_telegram_taken(username):
-    try:
-        r = requests.get(f"https://t.me/{username}", headers=HEADERS, timeout=10)
-        return r.status_code == 200 and "tgme_page_title" in r.text
-    except:
-        return False
+# ================== CHECK USERNAME ON FRAGMENT ==================
+def check_fragment_username(username, retries=3):
+    api_url = get_fragment_api()
+    if not api_url:
+        return {"error": "Could not fetch Fragment API"}
 
-
-# ================== FRAGMENT INTERNAL API ==================
-def fragment_lookup(username):
-    api_url = f"https://fragment.com/api/username/{username}"
-    page_url = f"https://fragment.com/username/{username}"
+    payload = {
+        "type": "usernames",
+        "query": username,
+        "method": "searchAuctions"
+    }
 
     try:
-        r = requests.get(api_url, headers=HEADERS, timeout=15)
-
-        if r.status_code != 200:
-            return {"on_fragment": False}
-
+        r = session.post(api_url, data=payload, timeout=15)
         data = r.json()
-
-        # REAL DATA FROM FRAGMENT
-        price_ton = data.get("price")           # <-- REAL PRICE
-        for_sale = data.get("for_sale", False)
-        sold = data.get("sold", False)
-
-        status = "Available" if for_sale else "Sold" if sold else "Listed"
-
-        return {
-            "on_fragment": True,
-            "status": status,
-            "price_ton": price_ton,
-            "url": page_url
-        }
-
     except:
-        return {"on_fragment": False}
+        if retries > 0:
+            time.sleep(2)
+            return check_fragment_username(username, retries - 1)
+        return {"error": "Fragment API request failed"}
+
+    html = data.get("html")
+    if not html:
+        return {"error": "No data returned from Fragment"}
+
+    soup = BeautifulSoup(html, "html.parser")
+    values = soup.find_all("div", class_="tm-value")
+
+    if len(values) < 3:
+        return {"error": "Incomplete Fragment response"}
+
+    tag = values[0].get_text(strip=True)
+    price = values[1].get_text(strip=True)
+    status = values[2].get_text(strip=True)
+
+    return {
+        "username": tag,
+        "price": price,
+        "status": status,
+        "on_fragment": True,
+        "fragment_url": f"https://fragment.com/username/{username}"
+    }
 
 
 # ================== ROOT ==================
@@ -88,59 +95,29 @@ def home():
 
 # ================== MAIN ENDPOINT ==================
 @app.route("/check", methods=["GET"])
-def check_username():
-    username = request.args.get("username", "").replace("@", "").lower()
+def check():
+    username = request.args.get("username", "").strip().lower()
     if not username:
         return jsonify({"error": "username required"}), 400
 
-    ton_usd, ton_inr = get_ton_rate()
+    result = check_fragment_username(username)
 
-    # 1️⃣ Telegram taken
-    if is_telegram_taken(username):
+    if "error" in result:
         return jsonify({
             "api_owner": API_OWNER,
             "contact": CONTACT,
-            "username": f"@{username}",
-            "status": "Taken",
-            "on_fragment": False,
-            "can_claim": False,
-            "price": None
-        })
+            "error": result["error"]
+        }), 500
 
-    # 2️⃣ Fragment check (REAL)
-    fragment = fragment_lookup(username)
-
-    if fragment.get("on_fragment"):
-        price = None
-        if fragment.get("price_ton") and ton_usd:
-            price = {
-                "ton": fragment["price_ton"],
-                "usd": round(fragment["price_ton"] * ton_usd, 2),
-                "inr": round(fragment["price_ton"] * ton_inr, 2) if ton_inr else None
-            }
-
-        return jsonify({
-            "api_owner": API_OWNER,
-            "contact": CONTACT,
-            "username": f"@{username}",
-            "status": fragment["status"],
-            "on_fragment": True,
-            "can_claim": False,
-            "price": price,
-            "fragment_url": fragment["url"],
-            "note": "TON price calculated using live market rate"
-        })
-
-    # 3️⃣ Directly claimable
     return jsonify({
         "api_owner": API_OWNER,
         "contact": CONTACT,
-        "username": f"@{username}",
-        "status": "Available",
-        "on_fragment": False,
-        "can_claim": True,
-        "price": None,
-        "message": "Can be claimed directly"
+        "portfolio": PORTFOLIO,
+        "username": result["username"],
+        "status": result["status"],
+        "price": result["price"],   # 🔥 REAL PRICE (TON)
+        "on_fragment": True,
+        "fragment_url": result["fragment_url"]
     })
 
 
