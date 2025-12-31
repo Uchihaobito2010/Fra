@@ -1,43 +1,51 @@
-from flask import Flask, request, jsonify
+import re
+import time
 import requests
+from bs4 import BeautifulSoup
+from fastapi import FastAPI, HTTPException, Query
 
-app = Flask(__name__)
+app = FastAPI()
 
-# ================== CREDITS ==================
-API_OWNER = "Paras chourasiya"
-CONTACT = "@Aotpy"
-PORTFOLIO = "https://Aotpy.netlify.app"
-
-# ================== SAFE HEADERS ==================
+# ================= SAFE HEADERS =================
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
-    "Referer": "https://fragment.com/"
+    "Referer": "https://fragment.com/",
+    "Accept": "application/json"
 }
 
-# ================== TON RATE ==================
-def get_ton_rate():
+# ================= CREDITS =================
+DEVELOPER = "Paras chourasiya"
+CONTACT = "t.me/Aotpy"
+PORTFOLIO = "https://Aotpy.netlify.app"
+CHANNEL = "Obitoapi / @obitostuffs"
+
+
+# ================= GET FRAGMENT INTERNAL API =================
+def frag_api():
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={
-                "ids": "the-open-network",
-                "vs_currencies": "usd,inr"
-            },
-            timeout=8
+            "https://fragment.com",
+            headers=HEADERS,
+            timeout=10
         )
-        data = r.json().get("the-open-network", {})
-        return data.get("usd"), data.get("inr")
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        for script in soup.find_all("script"):
+            if script.string and "apiUrl" in script.string:
+                match = re.search(r"hash=([a-fA-F0-9]+)", script.string)
+                if match:
+                    return f"https://fragment.com/api?hash={match.group(1)}"
+
+        return None
     except:
-        return None, None
+        return None
 
 
-# ================== FRAGMENT INTERNAL API ==================
-def fragment_lookup(username):
-    """
-    ⚠️ Static API endpoint (Vercel-safe)
-    """
-    api_url = "https://fragment.com/api"
+# ================= CHECK USERNAME =================
+def check_fgusername(username: str, retries=2):
+    api_url = frag_api()
+    if not api_url:
+        return {"error": "Could not get Fragment API"}
 
     payload = {
         "type": "usernames",
@@ -46,86 +54,75 @@ def fragment_lookup(username):
     }
 
     try:
-        r = requests.post(api_url, data=payload, headers=HEADERS, timeout=10)
+        r = requests.post(
+            api_url,
+            data=payload,
+            headers=HEADERS,
+            timeout=15
+        )
+        response = r.json()
+    except:
+        if retries > 0:
+            time.sleep(2)
+            return check_fgusername(username, retries - 1)
+        return {"error": "Fragment API request failed"}
 
-        if r.status_code != 200:
-            return {"error": "Fragment blocked request"}
+    html = response.get("html")
+    if not html:
+        return {"error": "No data returned from Fragment"}
 
-        data = r.json()
-        html = data.get("html")
+    soup = BeautifulSoup(html, "html.parser")
+    values = soup.find_all("div", class_="tm-value")
 
-        if not html:
-            return {"on_fragment": False}
+    if len(values) < 3:
+        return {"error": "Incomplete Fragment response"}
 
-        # SIMPLE TEXT PARSE (NO BS4)
-        lower = html.lower()
+    tag = values[0].get_text(strip=True)
+    price = values[1].get_text(strip=True)
+    status = values[2].get_text(strip=True)
 
-        price = None
-        if "ton" in lower:
-            import re
-            m = re.search(r'([\d,]+)\s*ton', lower)
-            if m:
-                price = m.group(1).replace(",", "")
+    available = status.lower() == "unavailable"
 
-        status = "Available" if "available" in lower else "Sold"
-
-        return {
-            "on_fragment": True,
-            "status": status,
-            "price_ton": float(price) if price else None,
-            "fragment_url": f"https://fragment.com/username/{username}"
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ================== ROOT ==================
-@app.route("/")
-def root():
-    return jsonify({
-        "api": "Telegram Fragment Username API",
-        "usage": "/check?username=tobi",
-        "owner": API_OWNER,
+    return {
+        "username": tag,
+        "price": price,          # REAL FRAGMENT PRICE
+        "status": status,
+        "available": available,
+        "message": (
+            "✅ This username might be free or not listed on Fragment"
+            if available else ""
+        ),
+        "developer": DEVELOPER,
         "contact": CONTACT,
         "portfolio": PORTFOLIO,
-        "status": "online"
-    })
+        "channel": CHANNEL
+    }
 
 
-# ================== MAIN ==================
-@app.route("/check")
-def check():
-    username = request.args.get("username", "").strip().lower()
-    if not username:
-        return jsonify({"error": "username required"}), 400
-
-    ton_usd, ton_inr = get_ton_rate()
-    frag = fragment_lookup(username)
-
-    if "error" in frag:
-        return jsonify({
-            "error": frag["error"],
-            "note": "Fragment may be blocking Vercel IPs"
-        }), 500
-
-    price = None
-    if frag.get("price_ton") and ton_usd:
-        price = {
-            "ton": frag["price_ton"],
-            "usd": round(frag["price_ton"] * ton_usd, 2),
-            "inr": round(frag["price_ton"] * ton_inr, 2) if ton_inr else None
-        }
-
-    return jsonify({
-        "api_owner": API_OWNER,
+# ================= ROOT =================
+@app.get("/")
+async def root():
+    return {
+        "api": "Telegram Fragment Username Checker API",
+        "usage": "/username?username=tobi",
+        "status": "online",
+        "developer": DEVELOPER,
         "contact": CONTACT,
-        "username": f"@{username}",
-        "on_fragment": frag.get("on_fragment"),
-        "status": frag.get("status"),
-        "price": price,
-        "fragment_url": frag.get("fragment_url")
-    })
+        "portfolio": PORTFOLIO,
+        "channel": CHANNEL
+    }
 
 
-app = app
+# ================= MAIN ENDPOINT =================
+@app.get("/username")
+async def check_username(username: str = Query(..., min_length=1)):
+    username = username.strip().lower()
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+
+    result = check_fgusername(username)
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return result
