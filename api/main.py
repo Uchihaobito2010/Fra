@@ -1,12 +1,11 @@
 import re
-import time
 import requests
 from bs4 import BeautifulSoup
 from user_agent import generate_user_agent
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+app = FastAPI(title="Telegram Username Checker API")
 
 # Enable CORS
 app.add_middleware(
@@ -29,13 +28,6 @@ CONTACT = "https://t.me/Aotpy"
 PORTFOLIO = "https://aotpy.vercel.app"
 CHANNEL = "@obitoapi / @obitostuffs"
 
-# ---- HEADERS for fragment scraping ----
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://fragment.com/"
-}
-
 # ---- FUNCTION 1: Check if Telegram username is taken ----
 def is_telegram_taken(username: str) -> bool:
     """Check if username is already taken on Telegram"""
@@ -46,7 +38,7 @@ def is_telegram_taken(username: str) -> bool:
     except Exception:
         return False
 
-# ---- FUNCTION 2: Get price from Fragment API (from first code) ----
+# ---- FUNCTION 2: Get price from Fragment API ----
 def get_fragment_api():
     """Get Fragment API URL with hash"""
     try:
@@ -109,13 +101,13 @@ def get_fragment_price(username: str):
         "available": status.lower() != "sold"
     }
 
-# ---- FUNCTION 3: Fragment lookup with scraping (from second code) ----
+# ---- FUNCTION 3: Fragment lookup with scraping ----
 def fragment_lookup(username: str):
     """Check if username is on Fragment marketplace"""
     url = f"https://fragment.com/username/{username}"
     
     try:  
-        r = session.get(url, headers=HEADERS, timeout=15)  
+        r = session.get(url, timeout=15)  
         if r.status_code != 200:  
             return {"on_fragment": False}  
 
@@ -232,25 +224,32 @@ def check_username_full(username: str):
 @app.get("/")
 def home():
     return {
-        "message": "Telegram Username Check API",
-        "usage": "/check?username=telegram",
-        "endpoints": {
-            "/check": "Complete username check",
-            "/price": "Get Fragment price only"
-        },
+        "api": "Telegram Username Checker",
+        "version": "2.0",
+        "description": "Check Telegram username availability and Fragment prices",
         "developer": DEVELOPER,
-        "contact": CONTACT
+        "contact": CONTACT,
+        "portfolio": PORTFOLIO,
+        "endpoints": {
+            "/": "This info page",
+            "/check?username={username}": "Full username check",
+            "/price?username={username}": "Get Fragment price only"
+        },
+        "example": "https://your-api.vercel.app/check?username=telegram"
     }
 
 @app.get("/check")
-def check_username(username: str = Query(..., min_length=1)):
+def check_username(username: str = Query(..., min_length=1, description="Telegram username without @ symbol")):
     """Complete username check endpoint"""
+    if len(username) > 32:
+        raise HTTPException(status_code=400, detail="Username too long (max 32 characters)")
+    
     result = check_username_full(username)
     return result
 
 @app.get("/price")
-def get_price(username: str = Query(..., min_length=1)):
-    """Get Fragment price only (from first API)"""
+def get_price(username: str = Query(..., min_length=1, description="Telegram username without @ symbol")):
+    """Get Fragment price only"""
     username = username.strip().lower().replace("@", "")
     
     price_data = get_fragment_price(username)
@@ -270,5 +269,15 @@ def get_price(username: str = Query(..., min_length=1)):
     
     return price_data
 
-# Vercel requires this
+@app.get("/status")
+def api_status():
+    """API status check"""
+    import time
+    return {
+        "status": "online",
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "service": "Telegram Username Checker"
+    }
+
+# Required for Vercel
 app = app
