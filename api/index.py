@@ -1,17 +1,22 @@
 from flask import Flask, request, jsonify
 import requests
-import re
-import json
 
 app = Flask(__name__)
 
+# ================== HEADERS ==================
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "application/json",
     "Referer": "https://fragment.com/"
 }
 
-# ---------------- TON LIVE PRICE ----------------
+# ================== CREDITS ==================
+API_OWNER = "Paras chourasiya"
+CONTACT = "@Aotpy"
+PORTFOLIO = "https://Aotpy.netlify.app"
+
+
+# ================== TON LIVE RATE ==================
 def get_ton_rate():
     try:
         r = requests.get(
@@ -28,7 +33,7 @@ def get_ton_rate():
         return None, None
 
 
-# ---------------- TELEGRAM CHECK ----------------
+# ================== TELEGRAM CHECK ==================
 def is_telegram_taken(username):
     try:
         r = requests.get(f"https://t.me/{username}", headers=HEADERS, timeout=10)
@@ -37,100 +42,51 @@ def is_telegram_taken(username):
         return False
 
 
-# ---------------- EXTRACT PRICE FROM NEXT_DATA ----------------
-def extract_price_from_next_data(html):
-    try:
-        m = re.search(
-            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
-            html,
-            re.DOTALL
-        )
-        if not m:
-            return None
-
-        data = json.loads(m.group(1))
-
-        # deep search for "price"
-        def find_price(obj):
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    if k == "price" and isinstance(v, (int, float)):
-                        return float(v)
-                    res = find_price(v)
-                    if res:
-                        return res
-            elif isinstance(obj, list):
-                for i in obj:
-                    res = find_price(i)
-                    if res:
-                        return res
-            return None
-
-        return find_price(data)
-
-    except:
-        return None
-
-
-# ---------------- FRAGMENT CHECK ----------------
+# ================== FRAGMENT INTERNAL API ==================
 def fragment_lookup(username):
-    url = f"https://fragment.com/username/{username}"
+    api_url = f"https://fragment.com/api/username/{username}"
+    page_url = f"https://fragment.com/username/{username}"
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = requests.get(api_url, headers=HEADERS, timeout=15)
+
         if r.status_code != 200:
             return {"on_fragment": False}
 
-        html_raw = r.text
-        html = html_raw.lower()
+        data = r.json()
 
-        # SOLD CHECK
-        if any(x in html for x in ["this username was sold", "sold for", "final price"]):
-            return {
-                "on_fragment": True,
-                "status": "Sold",
-                "price_ton": None,
-                "url": url
-            }
+        # REAL DATA FROM FRAGMENT
+        price_ton = data.get("price")           # <-- REAL PRICE
+        for_sale = data.get("for_sale", False)
+        sold = data.get("sold", False)
 
-        # PRICE (REAL METHOD)
-        price_ton = extract_price_from_next_data(html_raw)
+        status = "Available" if for_sale else "Sold" if sold else "Listed"
 
-        # FALLBACK (rare)
-        if not price_ton:
-            m = re.search(r'([\d,]{2,})\s*ton', html)
-            if m:
-                price_ton = float(m.group(1).replace(",", ""))
-
-        # LISTED
-        if any(x in html for x in ["buy username", "place a bid", "fragment marketplace"]):
-            return {
-                "on_fragment": True,
-                "status": "Available",
-                "price_ton": price_ton,
-                "url": url
-            }
-
-        return {"on_fragment": False}
+        return {
+            "on_fragment": True,
+            "status": status,
+            "price_ton": price_ton,
+            "url": page_url
+        }
 
     except:
         return {"on_fragment": False}
 
 
-# ---------------- ROOT ----------------
+# ================== ROOT ==================
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "api_owner": "Paras chourasiya",
-        "Contact": "t.me/Aotpy",
-        "Portfolio": "https://Aotpy.netlify.app",
         "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=tobi",
-        "status": "online"
+        "status": "online",
+        "api_owner": API_OWNER,
+        "contact": CONTACT,
+        "portfolio": PORTFOLIO
     })
 
 
-# ---------------- MAIN ENDPOINT ----------------
+# ================== MAIN ENDPOINT ==================
 @app.route("/check", methods=["GET"])
 def check_username():
     username = request.args.get("username", "").replace("@", "").lower()
@@ -142,8 +98,8 @@ def check_username():
     # 1️⃣ Telegram taken
     if is_telegram_taken(username):
         return jsonify({
-            "api_owner": "Paras chourasiya",
-            "contact": "@Aotpy",
+            "api_owner": API_OWNER,
+            "contact": CONTACT,
             "username": f"@{username}",
             "status": "Taken",
             "on_fragment": False,
@@ -151,7 +107,7 @@ def check_username():
             "price": None
         })
 
-    # 2️⃣ Fragment
+    # 2️⃣ Fragment check (REAL)
     fragment = fragment_lookup(username)
 
     if fragment.get("on_fragment"):
@@ -164,21 +120,21 @@ def check_username():
             }
 
         return jsonify({
-            "api_owner": "Paras chourasiya",
-            "contact": "@Aotpy",
+            "api_owner": API_OWNER,
+            "contact": CONTACT,
             "username": f"@{username}",
             "status": fragment["status"],
             "on_fragment": True,
             "can_claim": False,
             "price": price,
-            "fragment_url": fragment.get("url"),
+            "fragment_url": fragment["url"],
             "note": "TON price calculated using live market rate"
         })
 
-    # 3️⃣ Claimable
+    # 3️⃣ Directly claimable
     return jsonify({
-        "api_owner": "Paras chourasiya",
-        "contact": "@Aotpy",
+        "api_owner": API_OWNER,
+        "contact": CONTACT,
         "username": f"@{username}",
         "status": "Available",
         "on_fragment": False,
