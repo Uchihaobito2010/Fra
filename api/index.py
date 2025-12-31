@@ -1,135 +1,142 @@
-import re
-import time
+from flask import Flask, request, jsonify
 import requests
-from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query
+import re
 
-app = FastAPI()
+app = Flask(__name__)
 
-# ================= HEADERS =================
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Referer": "https://fragment.com/",
-    "Accept": "application/json"
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://fragment.com/"
 }
 
-# ================= CREDITS =================
-DEVELOPER = "Paras chourasiya"
-CONTACT = "https://t.me/Aotpy"
-PORTFOLIO = "https://Aotpy.netlify.app"
-CHANNEL = "Obito | Tobi Tools"
-
-
-# ================= GET FRAGMENT API =================
-def get_fragment_api():
+# ---------------- TELEGRAM CHECK ----------------
+def is_telegram_taken(username):
     try:
-        r = requests.get("https://fragment.com", headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        for script in soup.find_all("script"):
-            if script.string and "apiUrl" in script.string:
-                m = re.search(r"hash=([a-fA-F0-9]+)", script.string)
-                if m:
-                    return f"https://fragment.com/api?hash={m.group(1)}"
-
-        return None
+        r = requests.get(f"https://t.me/{username}", headers=HEADERS, timeout=10)
+        return r.status_code == 200 and "tgme_page_title" in r.text
     except:
-        return None
+        return False
 
 
-# ================= FRAGMENT CHECK =================
-def check_fragment_username(username: str):
-    api_url = get_fragment_api()
-    if not api_url:
-        return {
-            "username": f"@{username}",
-            "price": None,
-            "status": "Fragment unreachable",
-            "available": False
-        }
+# ---------------- FRAGMENT CHECK ----------------
+def fragment_lookup(username):
+    url = f"https://fragment.com/username/{username}"
 
-    headers = HEADERS
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return {"on_fragment": False}
 
-    def call_fragment(method_name):
-        payload = {
-            "type": "usernames",
-            "query": username,
-            "method": method_name
-        }
-        try:
-            r = requests.post(api_url, data=payload, headers=headers, timeout=20)
-            data = r.json()
-            return data.get("html")
-        except:
-            return None
+        html = r.text.lower()
 
-    # 1️⃣ Try auction listings
-    html = call_fragment("searchAuctions")
+        # ---------- STRICT SOLD DETECTION ----------
+        sold_signals = [
+            "this username was sold",
+            "sold for",
+            "final price"
+        ]
 
-    # 2️⃣ Fallback: direct username listings
-    if not html:
-        html = call_fragment("searchUsernames")
+        if any(sig in html for sig in sold_signals):
+            return {
+                "on_fragment": True,
+                "status": "Sold",
+                "price": None,
+                "url": url
+            }
 
-    # 3️⃣ Still nothing → truly not listed
-    if not html:
-        return {
-            "username": f"@{username}",
-            "price": None,
-            "status": "Not listed on Fragment",
-            "available": True
-        }
+        # ---------- PRICE (OPTIONAL) ----------
+        price = None
+        m = re.search(r'([\d,]{3,})\s*ton', html)
+        if m:
+            price = m.group(1).replace(",", "")
 
-    # Parse Fragment HTML
-    soup = BeautifulSoup(html, "html.parser")
-    values = soup.find_all("div", class_="tm-value")
+        # ---------- LISTED ON FRAGMENT ----------
+        fragment_signals = [
+            "buy username",
+            "place a bid",
+            "fragment marketplace"
+        ]
 
-    if len(values) < 3:
-        return {
-            "username": f"@{username}",
-            "price": None,
-            "status": "Fragment data incomplete",
-            "available": False
-        }
+        if any(sig in html for sig in fragment_signals):
+            return {
+                "on_fragment": True,
+                "status": "Available",
+                "price": price,
+                "url": url
+            }
 
-    tag = values[0].get_text(strip=True)
-    price = values[1].get_text(strip=True)
-    status = values[2].get_text(strip=True)
+        # ---------- NOT ON FRAGMENT ----------
+        return {"on_fragment": False}
 
-    available = status.lower() == "unavailable"
-
-    return {
-        "username": tag,
-        "price": price,
-        "status": status,
-        "available": available
-    }
-# ================= ROOT =================
-@app.get("/")
-async def root():
-    return {
-        "api": "Telegram Fragment Username Checker API",
-        "usage": "/username?username=tobi",
-        "status": "online",
-        "developer": DEVELOPER,
-        "contact": CONTACT,
-        "portfolio": PORTFOLIO,
-        "channel": CHANNEL
-    }
+    except:
+        return {"on_fragment": False}
 
 
-# ================= MAIN ENDPOINT =================
-@app.get("/username")
-async def check_username(username: str = Query(..., min_length=1)):
-    username = username.strip().lower()
+# ---------------- ROOT ----------------
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "api_owner": "Paras chourasiya",
+        "Contact": "t.me/Aotpy",
+        "Portfolio": "https://aotpy.vercel.app/",
+        
+        "api": "Telegram Fragment Username Check API",
+        "usage": "/check?username=tobi",
+        "status": "online"
+    })
+
+
+# ---------------- MAIN ENDPOINT ----------------
+@app.route("/check", methods=["GET"])
+def check_username():
+    username = request.args.get("username", "").replace("@", "").lower()
     if not username:
-        raise HTTPException(status_code=400, detail="username is required")
+        return jsonify({"error": "username required"}), 400
 
-    result = check_fragment_username(username)
+    # 1️⃣ Telegram taken
+    if is_telegram_taken(username):
+        return jsonify({
+            "api_owner": "Paras chourasiya",
+            "if any problem contact": "@Aotpy",
+            
+            "username": f"@{username}",
+            "status": "Taken",
+            "price_ton": "Unknown",
+            "on_fragment": False,
+            "can_claim": False,
+            "message": ""
+        })
 
-    return {
-        "developer": DEVELOPER,
-        "contact": CONTACT,
-        "portfolio": PORTFOLIO,
-        "channel": CHANNEL,
-        **result
-    }
+    # 2️⃣ Fragment check
+    fragment = fragment_lookup(username)
+
+    if fragment.get("on_fragment"):
+        return jsonify({
+            "owner": "Paras chourasiya",
+            "if any problem contact": "@Aotpy",
+            
+            "username": f"@{username}",
+            "status": fragment.get("status"),
+            "price_ton": fragment.get("price") or "Unknown",
+            "on_fragment": True,
+            "can_claim": False,
+            "message": "Buy from Fragment" if fragment.get("status") == "Available" else "",
+            "fragment_url": fragment.get("url")
+        })
+
+    # 3️⃣ Claimable
+    return jsonify({
+        "api_owner": "Paras chourasiya",
+        "if any problem contact": "@Aotpy",
+        "username": f"@{username}",
+        "status": "Available",
+        "price_ton": "Unknown",
+        "on_fragment": False,
+        "can_claim": True,
+        "message": "Can be claimed directly"
+    })
+
+
+app = app
+                
