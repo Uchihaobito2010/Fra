@@ -10,6 +10,23 @@ HEADERS = {
     "Referer": "https://fragment.com/"
 }
 
+# ---------------- TON LIVE PRICE ----------------
+def get_ton_rate():
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={
+                "ids": "the-open-network",
+                "vs_currencies": "usd,inr"
+            },
+            timeout=10
+        )
+        data = r.json().get("the-open-network", {})
+        return data.get("usd"), data.get("inr")
+    except:
+        return None, None
+
+
 # ---------------- TELEGRAM CHECK ----------------
 def is_telegram_taken(username):
     try:
@@ -30,43 +47,30 @@ def fragment_lookup(username):
 
         html = r.text.lower()
 
-        # ---------- STRICT SOLD DETECTION ----------
-        sold_signals = [
-            "this username was sold",
-            "sold for",
-            "final price"
-        ]
-
-        if any(sig in html for sig in sold_signals):
+        # SOLD
+        if any(x in html for x in ["this username was sold", "sold for", "final price"]):
             return {
                 "on_fragment": True,
                 "status": "Sold",
-                "price": None,
+                "price_ton": None,
                 "url": url
             }
 
-        # ---------- PRICE (OPTIONAL) ----------
-        price = None
-        m = re.search(r'([\d,]{3,})\s*ton', html)
+        # PRICE
+        price_ton = None
+        m = re.search(r'([\d,]{2,})\s*ton', html)
         if m:
-            price = m.group(1).replace(",", "")
+            price_ton = float(m.group(1).replace(",", ""))
 
-        # ---------- LISTED ON FRAGMENT ----------
-        fragment_signals = [
-            "buy username",
-            "place a bid",
-            "fragment marketplace"
-        ]
-
-        if any(sig in html for sig in fragment_signals):
+        # LISTED
+        if any(x in html for x in ["buy username", "place a bid", "fragment marketplace"]):
             return {
                 "on_fragment": True,
                 "status": "Available",
-                "price": price,
+                "price_ton": price_ton,
                 "url": url
             }
 
-        # ---------- NOT ON FRAGMENT ----------
         return {"on_fragment": False}
 
     except:
@@ -80,7 +84,6 @@ def home():
         "api_owner": "Paras chourasiya",
         "Contact": "t.me/Aotpy",
         "Portfolio": "https://aotpy.vercel.app/",
-        
         "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=tobi",
         "status": "online"
@@ -94,46 +97,53 @@ def check_username():
     if not username:
         return jsonify({"error": "username required"}), 400
 
+    ton_usd, ton_inr = get_ton_rate()
+
     # 1️⃣ Telegram taken
     if is_telegram_taken(username):
         return jsonify({
             "api_owner": "Paras chourasiya",
-            "if any problem contact": "@Aotpy",
-            
+            "contact": "@Aotpy",
             "username": f"@{username}",
             "status": "Taken",
-            "price_ton": "Unknown",
             "on_fragment": False,
             "can_claim": False,
-            "message": ""
+            "price": None
         })
 
-    # 2️⃣ Fragment check
+    # 2️⃣ Fragment
     fragment = fragment_lookup(username)
 
     if fragment.get("on_fragment"):
+        price = None
+        if fragment.get("price_ton") and ton_usd:
+            price = {
+                "ton": fragment["price_ton"],
+                "usd": round(fragment["price_ton"] * ton_usd, 2),
+                "inr": round(fragment["price_ton"] * ton_inr, 2) if ton_inr else None
+            }
+
         return jsonify({
-            "owner": "Paras chourasiya",
-            "if any problem contact": "@Aotpy",
-            
+            "api_owner": "Paras chourasiya",
+            "contact": "@Aotpy",
             "username": f"@{username}",
-            "status": fragment.get("status"),
-            "price_ton": fragment.get("price") or "Unknown",
+            "status": fragment["status"],
             "on_fragment": True,
             "can_claim": False,
-            "message": "Buy from Fragment" if fragment.get("status") == "Available" else "",
-            "fragment_url": fragment.get("url")
+            "price": price,
+            "fragment_url": fragment.get("url"),
+            "note": "TON price calculated using live market rate"
         })
 
     # 3️⃣ Claimable
     return jsonify({
         "api_owner": "Paras chourasiya",
-        "if any problem contact": "@Aotpy",
+        "contact": "@Aotpy",
         "username": f"@{username}",
         "status": "Available",
-        "price_ton": "Unknown",
         "on_fragment": False,
         "can_claim": True,
+        "price": None,
         "message": "Can be claimed directly"
     })
 
