@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import re
+import json
 
 app = Flask(__name__)
 
@@ -36,6 +37,41 @@ def is_telegram_taken(username):
         return False
 
 
+# ---------------- EXTRACT PRICE FROM NEXT_DATA ----------------
+def extract_price_from_next_data(html):
+    try:
+        m = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            html,
+            re.DOTALL
+        )
+        if not m:
+            return None
+
+        data = json.loads(m.group(1))
+
+        # deep search for "price"
+        def find_price(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "price" and isinstance(v, (int, float)):
+                        return float(v)
+                    res = find_price(v)
+                    if res:
+                        return res
+            elif isinstance(obj, list):
+                for i in obj:
+                    res = find_price(i)
+                    if res:
+                        return res
+            return None
+
+        return find_price(data)
+
+    except:
+        return None
+
+
 # ---------------- FRAGMENT CHECK ----------------
 def fragment_lookup(username):
     url = f"https://fragment.com/username/{username}"
@@ -45,9 +81,10 @@ def fragment_lookup(username):
         if r.status_code != 200:
             return {"on_fragment": False}
 
-        html = r.text.lower()
+        html_raw = r.text
+        html = html_raw.lower()
 
-        # SOLD
+        # SOLD CHECK
         if any(x in html for x in ["this username was sold", "sold for", "final price"]):
             return {
                 "on_fragment": True,
@@ -56,11 +93,14 @@ def fragment_lookup(username):
                 "url": url
             }
 
-        # PRICE
-        price_ton = None
-        m = re.search(r'([\d,]{2,})\s*ton', html)
-        if m:
-            price_ton = float(m.group(1).replace(",", ""))
+        # PRICE (REAL METHOD)
+        price_ton = extract_price_from_next_data(html_raw)
+
+        # FALLBACK (rare)
+        if not price_ton:
+            m = re.search(r'([\d,]{2,})\s*ton', html)
+            if m:
+                price_ton = float(m.group(1).replace(",", ""))
 
         # LISTED
         if any(x in html for x in ["buy username", "place a bid", "fragment marketplace"]):
@@ -83,7 +123,7 @@ def home():
     return jsonify({
         "api_owner": "Paras chourasiya",
         "Contact": "t.me/Aotpy",
-        "Portfolio": "https://aotpy.vercel.app/",
+        "Portfolio": "https://Aotpy.netlify.app",
         "api": "Telegram Fragment Username Check API",
         "usage": "/check?username=tobi",
         "status": "online"
