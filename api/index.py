@@ -38,41 +38,39 @@ def get_fragment_api():
 
 
 # ================= FRAGMENT CHECK =================
-def check_fragment_username(username: str, retries=2):
+def check_fragment_username(username: str):
     api_url = get_fragment_api()
-
-    # Fragment unreachable → still safe response
     if not api_url:
         return {
             "username": f"@{username}",
             "price": None,
-            "status": "Not listed on Fragment",
-            "available": True
+            "status": "Fragment unreachable",
+            "available": False
         }
 
-    payload = {
-        "type": "usernames",
-        "query": username,
-        "method": "searchAuctions"
-    }
+    headers = HEADERS
 
-    try:
-        r = requests.post(api_url, data=payload, headers=HEADERS, timeout=20)
-        data = r.json()
-    except:
-        if retries > 0:
-            time.sleep(2)
-            return check_fragment_username(username, retries - 1)
-        return {
-            "username": f"@{username}",
-            "price": None,
-            "status": "Not listed on Fragment",
-            "available": True
+    def call_fragment(method_name):
+        payload = {
+            "type": "usernames",
+            "query": username,
+            "method": method_name
         }
+        try:
+            r = requests.post(api_url, data=payload, headers=headers, timeout=20)
+            data = r.json()
+            return data.get("html")
+        except:
+            return None
 
-    html = data.get("html")
+    # 1️⃣ Try auction listings
+    html = call_fragment("searchAuctions")
 
-    # ✅ CORE FIX — empty html is NOT an error
+    # 2️⃣ Fallback: direct username listings
+    if not html:
+        html = call_fragment("searchUsernames")
+
+    # 3️⃣ Still nothing → truly not listed
     if not html:
         return {
             "username": f"@{username}",
@@ -81,6 +79,7 @@ def check_fragment_username(username: str, retries=2):
             "available": True
         }
 
+    # Parse Fragment HTML
     soup = BeautifulSoup(html, "html.parser")
     values = soup.find_all("div", class_="tm-value")
 
@@ -88,8 +87,8 @@ def check_fragment_username(username: str, retries=2):
         return {
             "username": f"@{username}",
             "price": None,
-            "status": "Not listed on Fragment",
-            "available": True
+            "status": "Fragment data incomplete",
+            "available": False
         }
 
     tag = values[0].get_text(strip=True)
