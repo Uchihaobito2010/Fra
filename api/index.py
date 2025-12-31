@@ -34,7 +34,7 @@ def get_ton_rate():
         return None, None
 
 
-# ================== FRAGMENT LOOKUP (FINAL) ==================
+# ================== FRAGMENT LOOKUP ==================
 def fragment_lookup(username):
     api_url = "https://fragment.com/api"
 
@@ -52,14 +52,14 @@ def fragment_lookup(username):
         except:
             return None
 
-    # 1️⃣ Auction
+    # Try auction
     html = call_fragment("searchAuctions")
 
-    # 2️⃣ Direct / premium
+    # Try direct sale
     if not html:
         html = call_fragment("searchUsernames")
 
-    # 3️⃣ Parse if HTML exists
+    # Parse if found
     if html:
         lower = html.lower()
 
@@ -77,7 +77,7 @@ def fragment_lookup(username):
             "fragment_url": f"https://fragment.com/username/{username}"
         }
 
-    # 4️⃣ FINAL FALLBACK — check Fragment page existence
+    # Fallback: page exists = premium listing
     try:
         page = requests.get(
             f"https://fragment.com/username/{username}",
@@ -85,7 +85,6 @@ def fragment_lookup(username):
             timeout=8
         )
         if page.status_code == 200:
-            # Page exists → premium / hidden listing
             return {
                 "on_fragment": True,
                 "status": "Available (Premium)",
@@ -95,34 +94,32 @@ def fragment_lookup(username):
     except:
         pass
 
-    # 5️⃣ Truly not listed
     return {
         "on_fragment": False,
         "status": "Not listed",
         "price_ton": None
     }
 
-# ================== API INFO ==================
-@app.route("/api")
-def api_info():
+
+# ================== ROUTES ==================
+@app.route("/")
+def home():
     return jsonify({
         "api": "Telegram Fragment Username API",
         "brand": BRAND,
         "owner": API_OWNER,
-        "usage": "/api/fragment/check?username=tobi",
         "contact": CONTACT,
         "portfolio": PORTFOLIO,
         "status": "online"
     })
 
 
-# ================== MAIN CHECK ==================
-@app.route("/api/fragment/check")
+@app.route("/fragment/check")
 def check_fragment():
     username = request.args.get("username", "").strip().lower()
 
     if not username or not username.isalnum():
-        return jsonify({"error": "Invalid username format"}), 400
+        return jsonify({"error": "Invalid username"}), 400
 
     ton_usd, ton_inr = get_ton_rate()
     frag = fragment_lookup(username)
