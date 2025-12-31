@@ -2,74 +2,78 @@ from flask import Flask, request, jsonify
 import requests
 import re
 import time
-from flask_cors import CORS
+import os
 
+# Initialize Flask app
 app = Flask(__name__)
-CORS(app)
 
 # API Info
 API_OWNER = "Paras Chourasiya"
 CONTACT = "t.me/Aotpy"
 PORTFOLIO = "https://aotpy.vercel.app"
 
-def check_single_username(username):
-    """Core function to check a single username"""
-    username = username.replace('@', '').strip().lower()
-    
-    if not username:
-        return {"error": "Username is empty"}
-    
-    # Check Telegram
-    telegram_url = f"https://t.me/{username}"
+# Headers for requests
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+def check_telegram_username(username):
+    """Check if username is taken on Telegram"""
     try:
-        tg_response = requests.get(telegram_url, timeout=5)
-        telegram_taken = "tgme_page" in tg_response.text
-    except:
-        telegram_taken = False
-    
-    # Check Fragment
-    fragment_url = f"https://fragment.com/username/{username}"
-    on_fragment = False
-    price = None
-    fragment_status = "Not on Fragment"
-    
-    try:
-        fr_response = requests.get(fragment_url, timeout=10)
-        html = fr_response.text.lower()
+        url = f"https://t.me/{username}"
+        response = requests.get(url, headers=HEADERS, timeout=5)
         
-        if "this username was sold" in html:
-            on_fragment = True
-            fragment_status = "Sold on Fragment"
-        elif "buy username" in html or "place a bid" in html:
-            on_fragment = True
-            fragment_status = "Available on Fragment"
-            price_match = re.search(r'(\d[\d,]+)\s*ton', html)
-            if price_match:
-                price = price_match.group(1).replace(',', '')
+        # Check if it's a Telegram user/channel page
+        if "tgme_page" in response.text or "tgme_widget_message" in response.text:
+            return True
+        # Check if it shows "If you have Telegram" message (available)
+        elif "If you have <strong>Telegram</strong>, you can contact" in response.text:
+            return False
+        return False
+    except:
+        return False
+
+def check_fragment_username(username):
+    """Check if username is on Fragment marketplace"""
+    try:
+        url = f"https://fragment.com/username/{username}"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        
+        if response.status_code != 200:
+            return {"on_fragment": False}
+        
+        html = response.text.lower()
+        
+        # Check for sold
+        if "this username was sold" in html or "sold for" in html:
+            return {
+                "on_fragment": True,
+                "status": "Sold",
+                "price": self.extract_price(html)
+            }
+        
+        # Check for available
+        if "buy username" in html or "place a bid" in html:
+            return {
+                "on_fragment": True,
+                "status": "Available",
+                "price": self.extract_price(html)
+            }
+        
+        return {"on_fragment": False}
+        
+    except:
+        return {"on_fragment": False}
+
+def extract_price(html):
+    """Extract price from Fragment HTML"""
+    try:
+        match = re.search(r'(\d[\d,]+)\s*ton', html)
+        if match:
+            return match.group(1).replace(',', '')
     except:
         pass
-    
-    # Determine final status
-    if telegram_taken:
-        final_status = "Taken on Telegram"
-        can_claim = False
-    elif on_fragment:
-        final_status = fragment_status
-        can_claim = False
-    else:
-        final_status = "Available"
-        can_claim = True
-    
-    return {
-        "username": f"@{username}",
-        "status": final_status,
-        "telegram_taken": telegram_taken,
-        "on_fragment": on_fragment,
-        "price_ton": price,
-        "can_claim": can_claim,
-        "fragment_url": fragment_url if on_fragment else None,
-        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S UTC")
-    }
+    return None
 
 @app.route('/', methods=['GET'])
 def home():
@@ -82,67 +86,117 @@ def home():
             "/health": "GET /health",
             "/batch": "POST /batch with JSON {\"usernames\":[...]}"
         },
-        "example": "https://yourapi.vercel.app/check?username=tobi",
+        "example": "/check?username=tobi",
         "status": "online"
     })
 
 @app.route('/check', methods=['GET'])
-def check_username():
-    username = request.args.get('username', '').replace('@', '').strip().lower()
-    
-    if not username:
-        return jsonify({"error": "Username is required", "example": "/check?username=tobi"}), 400
-    
-    result = check_single_username(username)
-    result["api_owner"] = API_OWNER
-    result["contact"] = CONTACT
-    
-    return jsonify(result)
+def check():
+    """Check single username"""
+    try:
+        username = request.args.get('username', '').replace('@', '').strip().lower()
+        
+        if not username:
+            return jsonify({"error": "Username is required", "example": "/check?username=tobi"}), 400
+        
+        # Check Telegram
+        telegram_taken = check_telegram_username(username)
+        
+        # Check Fragment
+        fragment_data = check_fragment_username(username)
+        
+        # Determine status
+        if telegram_taken:
+            status = "Taken on Telegram"
+            can_claim = False
+        elif fragment_data.get("on_fragment"):
+            status = fragment_data.get("status", "Listed on Fragment")
+            can_claim = False
+        else:
+            status = "Available"
+            can_claim = True
+        
+        return jsonify({
+            "username": f"@{username}",
+            "status": status,
+            "telegram_taken": telegram_taken,
+            "on_fragment": fragment_data.get("on_fragment", False),
+            "price_ton": fragment_data.get("price"),
+            "can_claim": can_claim,
+            "api_owner": API_OWNER,
+            "contact": CONTACT,
+            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S UTC")
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "healthy",
         "timestamp": time.time(),
-        "service": "Telegram Username Checker API"
+        "service": "Telegram Username Checker"
     })
 
 @app.route('/batch', methods=['POST'])
-def batch_check():
+def batch():
+    """Batch check usernames"""
     try:
         data = request.get_json()
         if not data or 'usernames' not in data:
-            return jsonify({"error": "Send JSON with 'usernames' array", "example": {"usernames": ["user1", "user2"]}}), 400
+            return jsonify({"error": "Send JSON with 'usernames' array"}), 400
         
         usernames = data['usernames']
         
         if not isinstance(usernames, list):
             return jsonify({"error": "'usernames' must be an array"}), 400
         
-        if len(usernames) > 50:
-            return jsonify({"error": "Maximum 50 usernames allowed"}), 400
+        if len(usernames) > 20:
+            return jsonify({"error": "Maximum 20 usernames allowed"}), 400
         
         results = []
         
         for uname in usernames:
-            if uname:  # Skip empty usernames
-                result = check_single_username(str(uname))
-                results.append(result)
+            username = str(uname).replace('@', '').strip().lower()
+            if username:
+                telegram_taken = check_telegram_username(username)
+                fragment_data = check_fragment_username(username)
+                
+                if telegram_taken:
+                    status = "Taken on Telegram"
+                elif fragment_data.get("on_fragment"):
+                    status = fragment_data.get("status", "Listed")
+                else:
+                    status = "Available"
+                
+                results.append({
+                    "username": f"@{username}",
+                    "status": status,
+                    "telegram_taken": telegram_taken,
+                    "on_fragment": fragment_data.get("on_fragment", False)
+                })
         
         return jsonify({
             "results": results,
             "count": len(results),
-            "api_owner": API_OWNER,
-            "batch_completed": True,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC")
+            "api_owner": API_OWNER
         })
         
     except Exception as e:
-        return jsonify({"error": f"Invalid request: {str(e)}"}), 400
+        return jsonify({"error": str(e)}), 500
 
-# This is required for Vercel
+# CORS middleware for Vercel
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+# Vercel requires this
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
 else:
     # For Vercel serverless
     application = app
