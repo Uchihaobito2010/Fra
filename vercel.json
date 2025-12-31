@@ -8,7 +8,11 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
+      "src": "/api/fragment/check",
+      "dest": "app.py"
+    },
+    {
+      "src": "/api",
       "dest": "app.py"
     },
     {
