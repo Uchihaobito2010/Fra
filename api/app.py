@@ -10,7 +10,7 @@ BRAND = "Tobi Tools"
 CONTACT = "@Aotpy"
 PORTFOLIO = "https://Aotpy.netlify.app"
 
-# ================== SAFE HEADERS ==================
+# ================== HEADERS ==================
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "application/json",
@@ -34,49 +34,59 @@ def get_ton_rate():
         return None, None
 
 
-# ================== FRAGMENT LOOKUP ==================
+# ================== FRAGMENT LOOKUP (FINAL) ==================
 def fragment_lookup(username):
     api_url = "https://fragment.com/api"
 
-    payload = {
-        "type": "usernames",
-        "query": username,
-        "method": "searchAuctions"
-    }
+    def call_fragment(method):
+        payload = {
+            "type": "usernames",
+            "query": username,
+            "method": method
+        }
+        try:
+            r = requests.post(api_url, data=payload, headers=HEADERS, timeout=10)
+            if r.status_code != 200:
+                return None
+            return r.json().get("html")
+        except:
+            return None
 
-    try:
-        r = requests.post(api_url, data=payload, headers=HEADERS, timeout=10)
+    # 1️⃣ Auction listings
+    html = call_fragment("searchAuctions")
 
-        if r.status_code != 200:
-            return {"error": "Fragment blocked request"}
+    # 2️⃣ Direct / premium sale listings
+    if not html:
+        html = call_fragment("searchUsernames")
 
-        data = r.json()
-        html = data.get("html")
-
-        if not html:
-            return {
-                "on_fragment": False,
-                "status": "Not listed"
-            }
-
-        lower = html.lower()
-
-        price = None
-        m = re.search(r'([\d,]+)\s*ton', lower)
-        if m:
-            price = float(m.group(1).replace(",", ""))
-
-        status = "Sold" if "sold" in lower else "Available"
-
+    # 3️⃣ Truly not listed
+    if not html:
         return {
-            "on_fragment": True,
-            "status": status,
-            "price_ton": price,
-            "fragment_url": f"https://fragment.com/username/{username}"
+            "on_fragment": False,
+            "status": "Not listed",
+            "price_ton": None
         }
 
-    except Exception as e:
-        return {"error": str(e)}
+    lower = html.lower()
+
+    # PRICE
+    price = None
+    m = re.search(r'([\d,]+)\s*ton', lower)
+    if m:
+        price = float(m.group(1).replace(",", ""))
+
+    # STATUS
+    if "sold" in lower:
+        status = "Sold"
+    else:
+        status = "Available"
+
+    return {
+        "on_fragment": True,
+        "status": status,
+        "price_ton": price,
+        "fragment_url": f"https://fragment.com/username/{username}"
+    }
 
 
 # ================== API INFO ==================
@@ -103,12 +113,6 @@ def check_fragment():
 
     ton_usd, ton_inr = get_ton_rate()
     frag = fragment_lookup(username)
-
-    if "error" in frag:
-        return jsonify({
-            "error": frag["error"],
-            "note": "Fragment may be blocking server IP"
-        }), 500
 
     price = None
     if frag.get("price_ton") and ton_usd:
