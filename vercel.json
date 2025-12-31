@@ -1,14 +1,13 @@
 {
-  "builds": [
-    {
-      "src": "api/username.py",
-      "use": "@vercel/python"
+  "functions": {
+    "api/username.py": {
+      "maxDuration": 30
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/(.*)",
-      "dest": "/api/username"
+      "source": "/(.*)",
+      "destination": "/api/username"
     }
   ],
   "headers": [
@@ -21,11 +20,11 @@
         },
         {
           "key": "Access-Control-Allow-Methods",
-          "value": "GET,POST,OPTIONS,PUT,DELETE"
+          "value": "GET,POST,OPTIONS"
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization"
+          "value": "Content-Type"
         }
       ]
     }
