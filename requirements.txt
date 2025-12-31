@@ -1,4 +1,2 @@
 fastapi
 requests
-beautifulsoup4
-user-agent
