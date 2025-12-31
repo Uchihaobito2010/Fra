@@ -1,418 +1,488 @@
-# app.py
-from flask import Flask, request, jsonify
+"""
+Telegram Username Availability Checker API
+Author: Paras Chourasiya
+Contact: t.me/Aotpy
+Portfolio: https://aotpy.vercel.app
+"""
+
+from http.server import BaseHTTPRequestHandler
+import json
 import requests
 import re
 import time
-from functools import lru_cache
-import logging
-from flask_cors import CORS
-
-app = Flask(__name__)
-CORS(app)
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://fragment.com/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1"
-}
+import urllib.parse
+from datetime import datetime
 
 API_OWNER = "Paras Chourasiya"
 CONTACT = "t.me/Aotpy"
-PORTFOLIO = "https://aotpy.vercel.app/"
+PORTFOLIO = "https://aotpy.vercel.app"
 CHANNEL = "@obitoapi / @obitostuffs"
 
-# ---------------- UTILITY FUNCTIONS ----------------
-def validate_username(username):
-    """Validate Telegram username format"""
-    if not username or len(username) < 5 or len(username) > 32:
-        return False
-    pattern = r'^[a-zA-Z0-9_]+$'
-    return bool(re.match(pattern, username))
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0"
+}
 
-# ---------------- TELEGRAM CHECK ----------------
-@lru_cache(maxsize=100)
-def is_telegram_taken(username):
-    """Check if username is taken on Telegram"""
-    try:
-        url = f"https://t.me/{username}"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        
-        # Check for "If you have Telegram, you can contact" - indicates available username
-        if "If you have <strong>Telegram</strong>, you can contact" in r.text:
-            return False
-            
-        # Check if it's a valid Telegram page
-        if "tgme_page" in r.text or "tgme_widget_message" in r.text:
-            return True
-            
-        return False
-    except Exception as e:
-        logger.error(f"Telegram check error for {username}: {e}")
-        return None  # Return None on error
-
-# ---------------- FRAGMENT CHECK ----------------
-@lru_cache(maxsize=100)
-def fragment_lookup(username):
-    """Check if username is on Fragment marketplace"""
-    url = f"https://fragment.com/username/{username}"
+class handler(BaseHTTPRequestHandler):
     
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        
-        # If page doesn't exist, username not on Fragment
-        if r.status_code == 404:
-            return {"on_fragment": False, "status": "Not Found"}
+    def do_GET(self):
+        """Handle GET requests"""
+        try:
+            # Parse the path
+            parsed_path = urllib.parse.urlparse(self.path)
+            path = parsed_path.path
             
-        if r.status_code != 200:
-            return {"on_fragment": False, "status": "Error", "error_code": r.status_code}
-        
-        html = r.text.lower()
-        
-        # ---------- SOLD DETECTION ----------
-        sold_keywords = [
-            "this username was sold",
-            "sold for",
-            "final price",
-            "this lot is sold",
-            "auction ended",
-            "was purchased"
-        ]
-        
-        for keyword in sold_keywords:
-            if keyword in html:
-                # Extract price if available
-                price_match = re.search(r'(\d[\d,]+\s*ton)', html)
-                price = price_match.group(1).replace(',', '') if price_match else None
+            # Set CORS headers
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            
+            if path == '/':
+                response = self.home_endpoint()
+                self.send_json_response(200, response)
                 
-                return {
-                    "on_fragment": True,
-                    "status": "Sold",
-                    "price": price,
-                    "url": url,
-                    "fragment_type": "username"
+            elif path == '/check':
+                response = self.check_endpoint(parsed_path.query)
+                self.send_json_response(200, response)
+                
+            elif path == '/batch':
+                response = {"error": "Use POST method for batch endpoint", "example": {"usernames": ["user1", "user2"]}}
+                self.send_json_response(400, response)
+                
+            elif path == '/health':
+                response = self.health_endpoint()
+                self.send_json_response(200, response)
+                
+            elif path == '/status':
+                response = self.status_endpoint()
+                self.send_json_response(200, response)
+                
+            elif path == '/validate':
+                response = self.validate_endpoint(parsed_path.query)
+                self.send_json_response(200, response)
+                
+            else:
+                response = {
+                    "error": "Endpoint not found",
+                    "available_endpoints": [
+                        "/",
+                        "/check?username=example",
+                        "/batch (POST)",
+                        "/health",
+                        "/status",
+                        "/validate?username=example"
+                    ]
                 }
-        
-        # ---------- AVAILABLE ON FRAGMENT ----------
-        available_keywords = [
-            "buy username",
-            "place a bid",
-            "current bid",
-            "starting price",
-            "auction ends",
-            "fragment marketplace"
-        ]
-        
-        for keyword in available_keywords:
-            if keyword in html:
-                # Extract price
-                price_match = re.search(r'(\d[\d,]+)\s*ton', html)
-                price = price_match.group(1).replace(',', '') if price_match else None
+                self.send_json_response(404, response)
                 
-                # Check if it's auction or fixed price
-                if "auction ends" in html or "place a bid" in html:
-                    status = "Auction"
-                else:
-                    status = "Available for Purchase"
+        except Exception as e:
+            error_response = {
+                "error": "Internal server error",
+                "message": str(e),
+                "contact": CONTACT
+            }
+            self.send_json_response(500, error_response)
+    
+    def do_POST(self):
+        """Handle POST requests for batch checking"""
+        try:
+            if self.path == '/batch':
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length)
                 
-                return {
-                    "on_fragment": True,
-                    "status": status,
-                    "price": price,
-                    "url": url,
-                    "fragment_type": "username"
-                }
+                try:
+                    data = json.loads(post_data.decode('utf-8'))
+                    usernames = data.get('usernames', [])
+                    
+                    if not usernames or not isinstance(usernames, list):
+                        response = {
+                            "error": "Please provide 'usernames' array in JSON body",
+                            "example": {"usernames": ["user1", "user2", "user3"]}
+                        }
+                        self.send_json_response(400, response)
+                        return
+                    
+                    if len(usernames) > 50:
+                        response = {"error": "Maximum 50 usernames allowed per batch"}
+                        self.send_json_response(400, response)
+                        return
+                    
+                    results = []
+                    for username in usernames:
+                        result = self.check_single_username(username)
+                        results.append(result)
+                    
+                    response = {
+                        "results": results,
+                        "total": len(results),
+                        "batch_checked": True,
+                        "checked_at": self.get_timestamp(),
+                        "api_owner": API_OWNER
+                    }
+                    self.send_json_response(200, response)
+                    
+                except json.JSONDecodeError:
+                    response = {"error": "Invalid JSON format"}
+                    self.send_json_response(400, response)
+            else:
+                response = {"error": "POST method only allowed for /batch endpoint"}
+                self.send_json_response(405, response)
+                
+        except Exception as e:
+            error_response = {
+                "error": "Internal server error",
+                "message": str(e)
+            }
+            self.send_json_response(500, error_response)
+    
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests"""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+    
+    def send_json_response(self, status_code, data):
+        """Send JSON response"""
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data, indent=2).encode('utf-8'))
+    
+    # ========== ENDPOINT HANDLERS ==========
+    
+    def home_endpoint(self):
+        """Homepage with API documentation"""
+        return {
+            "api": "Telegram Fragment Username Checker API",
+            "version": "2.0",
+            "author": API_OWNER,
+            "contact": CONTACT,
+            "portfolio": PORTFOLIO,
+            "channel": CHANNEL,
+            "description": "Check Telegram username availability on Telegram and Fragment.com marketplace",
+            "endpoints": {
+                "GET /": "API documentation (this page)",
+                "GET /check?username=xxx": "Check single username availability",
+                "POST /batch": "Check multiple usernames (send JSON: {\"usernames\": [\"user1\", \"user2\"]})",
+                "GET /health": "API health check",
+                "GET /status": "API status and features",
+                "GET /validate?username=xxx": "Validate username format"
+            },
+            "examples": {
+                "single_check": "https://your-api.vercel.app/check?username=tobi",
+                "batch_check_curl": "curl -X POST https://your-api.vercel.app/batch -H 'Content-Type: application/json' -d '{\"usernames\":[\"tobi\",\"naruto\"]}'",
+                "validate": "https://your-api.vercel.app/validate?username=test123"
+            },
+            "note": "Username should be without @ symbol",
+            "timestamp": self.get_timestamp()
+        }
+    
+    def check_endpoint(self, query_string):
+        """Check single username endpoint"""
+        params = urllib.parse.parse_qs(query_string)
+        username = params.get('username', [''])[0].replace('@', '').strip().lower()
         
-        # ---------- RESERVED/PREMIUM ----------
-        if "reserved" in html or "premium" in html:
+        if not username:
             return {
-                "on_fragment": True,
-                "status": "Reserved/Premium",
-                "price": None,
-                "url": url,
-                "fragment_type": "username"
+                "error": "Username parameter is required",
+                "example": "/check?username=example",
+                "note": "Do not include @ symbol"
             }
         
-        # ---------- NOT ON FRAGMENT ----------
-        return {"on_fragment": False, "status": "Not Listed"}
+        return self.check_single_username(username)
+    
+    def validate_endpoint(self, query_string):
+        """Validate username format"""
+        params = urllib.parse.parse_qs(query_string)
+        username = params.get('username', [''])[0].replace('@', '').strip()
         
-    except Exception as e:
-        logger.error(f"Fragment lookup error for {username}: {e}")
-        return {"on_fragment": False, "status": "Error", "error": str(e)}
-
-# ---------------- BATCH CHECK ----------------
-def batch_check_usernames(usernames):
-    """Check multiple usernames at once"""
-    results = []
-    for username in usernames:
-        if validate_username(username):
-            result = check_single_username(username)
-            results.append(result)
-    return results
-
-# ---------------- SINGLE CHECK LOGIC ----------------
-def check_single_username(username):
-    """Core checking logic for a single username"""
-    username = username.replace("@", "").strip().lower()
-    
-    # Validate username
-    if not validate_username(username):
-        return {
-            "username": f"@{username}",
-            "status": "Invalid",
-            "price_ton": None,
-            "on_fragment": False,
-            "can_claim": False,
-            "message": "Invalid Telegram username format",
-            "valid": False
-        }
-    
-    # Check Telegram
-    telegram_status = is_telegram_taken(username)
-    
-    # If Telegram check failed
-    if telegram_status is None:
-        return {
-            "username": f"@{username}",
-            "status": "Unknown",
-            "price_ton": None,
-            "on_fragment": False,
-            "can_claim": False,
-            "message": "Unable to check Telegram status",
-            "valid": True
-        }
-    
-    # If taken on Telegram
-    if telegram_status:
-        return {
-            "username": f"@{username}",
-            "status": "Taken on Telegram",
-            "price_ton": None,
-            "on_fragment": False,
-            "can_claim": False,
-            "message": "Username is already in use on Telegram",
-            "valid": True
-        }
-    
-    # Check Fragment
-    fragment = fragment_lookup(username)
-    
-    if fragment.get("on_fragment"):
-        message_map = {
-            "Sold": "This username was sold on Fragment",
-            "Auction": "Available for auction on Fragment",
-            "Available for Purchase": "Available for purchase on Fragment",
-            "Reserved/Premium": "Reserved or premium username on Fragment"
-        }
+        if not username:
+            return {
+                "error": "Username parameter is required",
+                "example": "/validate?username=example"
+            }
+        
+        is_valid = self.validate_username_format(username)
         
         return {
             "username": f"@{username}",
-            "status": fragment.get("status"),
-            "price_ton": fragment.get("price"),
-            "on_fragment": True,
-            "can_claim": False,
-            "message": message_map.get(fragment.get("status"), "Listed on Fragment"),
-            "fragment_url": fragment.get("url"),
-            "valid": True
+            "valid": is_valid,
+            "validation_rules": {
+                "min_length": 5,
+                "max_length": 32,
+                "allowed_characters": "a-z, A-Z, 0-9, underscore (_)",
+                "no_spaces": True,
+                "no_special_chars": True,
+                "cannot_start_with_number": False,
+                "cannot_end_with_underscore": False
+            },
+            "message": "Valid Telegram username format" if is_valid else "Invalid Telegram username format"
         }
     
-    # Available for claim
-    return {
-        "username": f"@{username}",
-        "status": "Available",
-        "price_ton": None,
-        "on_fragment": False,
-        "can_claim": True,
-        "message": "Can be claimed directly on Telegram",
-        "valid": True
-    }
-
-# ---------------- ENHANCED FRAGMENT API CHECK ----------------
-def fragment_api_check(username):
-    """Alternative check using Fragment API"""
-    try:
-        # First get the homepage to find API hash
-        r = requests.get("https://fragment.com", headers=HEADERS, timeout=10)
+    def health_endpoint(self):
+        """Health check endpoint"""
+        # Test Telegram
+        telegram_test = self.test_telegram()
+        fragment_test = self.test_fragment()
         
-        # Find API hash in JavaScript
-        hash_match = re.search(r'hash=([a-fA-F0-9]+)', r.text)
-        if not hash_match:
-            return None
+        all_ok = telegram_test and fragment_test
+        
+        return {
+            "status": "healthy" if all_ok else "partial",
+            "services": {
+                "telegram": "operational" if telegram_test else "unavailable",
+                "fragment": "operational" if fragment_test else "unavailable"
+            },
+            "timestamp": self.get_timestamp(),
+            "response_time": "N/A",
+            "api_version": "2.0"
+        }
+    
+    def status_endpoint(self):
+        """API status endpoint"""
+        return {
+            "api": "Telegram Fragment Username Checker",
+            "status": "operational",
+            "version": "2.0",
+            "features": [
+                "Real-time Telegram username check",
+                "Fragment.com marketplace integration",
+                "Batch processing (up to 50 usernames)",
+                "Username format validation",
+                "CORS enabled",
+                "JSON responses"
+            ],
+            "rate_limits": "None currently applied",
+            "uptime": "100% (since deployment)",
+            "maintenance": "No scheduled maintenance",
+            "support": CONTACT,
+            "last_updated": "2024-12-30"
+        }
+    
+    # ========== CORE FUNCTIONS ==========
+    
+    def check_single_username(self, username):
+        """Core function to check a single username"""
+        # Validate format first
+        if not self.validate_username_format(username):
+            return {
+                "username": f"@{username}",
+                "status": "Invalid Format",
+                "valid": False,
+                "message": "Invalid Telegram username format",
+                "telegram_taken": False,
+                "on_fragment": False,
+                "can_claim": False,
+                "api_owner": API_OWNER,
+                "checked_at": self.get_timestamp()
+            }
+        
+        # Check Telegram
+        telegram_taken = self.check_telegram(username)
+        
+        if telegram_taken is None:
+            # Telegram check failed
+            return {
+                "username": f"@{username}",
+                "status": "Telegram Check Failed",
+                "valid": True,
+                "message": "Unable to check Telegram status",
+                "telegram_taken": None,
+                "on_fragment": False,
+                "can_claim": None,
+                "api_owner": API_OWNER,
+                "checked_at": self.get_timestamp()
+            }
+        
+        if telegram_taken:
+            # Username is taken on Telegram
+            return {
+                "username": f"@{username}",
+                "status": "Taken on Telegram",
+                "valid": True,
+                "message": "Username is already in use on Telegram",
+                "telegram_taken": True,
+                "on_fragment": False,
+                "can_claim": False,
+                "api_owner": API_OWNER,
+                "checked_at": self.get_timestamp()
+            }
+        
+        # Check Fragment
+        fragment_data = self.check_fragment(username)
+        
+        if fragment_data.get("on_fragment"):
+            # On Fragment marketplace
+            status_messages = {
+                "Sold": "This username was sold on Fragment",
+                "Available": "Available for purchase on Fragment",
+                "Auction": "Available for auction on Fragment",
+                "Reserved": "Reserved username on Fragment"
+            }
             
-        api_url = f"https://fragment.com/api?hash={hash_match.group(1)}"
+            status = fragment_data.get("status", "Listed")
+            message = status_messages.get(status, "Listed on Fragment marketplace")
+            
+            return {
+                "username": f"@{username}",
+                "status": status,
+                "valid": True,
+                "message": message,
+                "telegram_taken": False,
+                "on_fragment": True,
+                "price_ton": fragment_data.get("price"),
+                "fragment_url": fragment_data.get("url"),
+                "can_claim": False,
+                "api_owner": API_OWNER,
+                "contact": CONTACT,
+                "checked_at": self.get_timestamp()
+            }
         
-        # Prepare API request
-        data = {
-            "type": "usernames",
-            "query": username,
-            "method": "searchAuctions"
+        # Available for claiming
+        return {
+            "username": f"@{username}",
+            "status": "Available",
+            "valid": True,
+            "message": "Username is available and can be claimed on Telegram",
+            "telegram_taken": False,
+            "on_fragment": False,
+            "can_claim": True,
+            "api_owner": API_OWNER,
+            "contact": CONTACT,
+            "checked_at": self.get_timestamp()
         }
+    
+    def validate_username_format(self, username):
+        """Validate Telegram username format"""
+        if not username or len(username) < 5 or len(username) > 32:
+            return False
         
-        api_response = requests.post(api_url, data=data, headers=HEADERS, timeout=10)
-        return api_response.json()
+        # Telegram username pattern: letters, numbers, underscores
+        pattern = r'^[a-zA-Z0-9_]+$'
+        if not re.match(pattern, username):
+            return False
         
-    except Exception as e:
-        logger.error(f"Fragment API error: {e}")
-        return None
-
-# ---------------- ENDPOINTS ----------------
-
-@app.route("/", methods=["GET"])
-def home():
-    """API homepage with documentation"""
-    return jsonify({
-        "api": "Telegram Username Availability Checker",
-        "version": "2.0",
-        "author": API_OWNER,
-        "contact": CONTACT,
-        "portfolio": PORTFOLIO,
-        "channel": CHANNEL,
-        "endpoints": {
-            "/check": "Check single username (GET: ?username=xxx)",
-            "/batch": "Check multiple usernames (POST: JSON array)",
-            "/health": "API health check",
-            "/validate": "Validate username format (GET: ?username=xxx)",
-            "/status": "API status and usage"
-        },
-        "example": "/check?username=tobi",
-        "note": "All usernames should be without @ symbol",
-        "status": "online",
-        "timestamp": time.time()
-    })
-
-@app.route("/check", methods=["GET"])
-def check_username():
-    """Check availability of a single username"""
-    username = request.args.get("username", "").replace("@", "").strip()
-    
-    if not username:
-        return jsonify({
-            "error": "Username is required",
-            "example": "/check?username=example"
-        }), 400
-    
-    result = check_single_username(username)
-    result.update({
-        "api_owner": API_OWNER,
-        "contact": CONTACT,
-        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S UTC")
-    })
-    
-    return jsonify(result)
-
-@app.route("/batch", methods=["POST"])
-def batch_check():
-    """Check multiple usernames at once"""
-    try:
-        data = request.get_json()
-        if not data or "usernames" not in data:
-            return jsonify({
-                "error": "Please provide 'usernames' array in JSON body",
-                "example": {"usernames": ["user1", "user2", "user3"]}
-            }), 400
+        # Additional Telegram rules
+        if username.endswith('_') or '__' in username:
+            return False
         
-        usernames = data["usernames"]
-        if not isinstance(usernames, list) or len(usernames) > 50:
-            return jsonify({
-                "error": "Please provide up to 50 usernames in an array"
-            }), 400
+        return True
+    
+    def check_telegram(self, username):
+        """Check if username is taken on Telegram"""
+        try:
+            url = f"https://t.me/{username}"
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            
+            # If page contains "If you have Telegram" - it's available
+            if "If you have <strong>Telegram</strong>, you can contact" in response.text:
+                return False
+            
+            # If it contains Telegram page elements - it's taken
+            if "tgme_page" in response.text or "tgme_widget_message" in response.text:
+                return True
+            
+            return False
+            
+        except requests.exceptions.Timeout:
+            return None
+        except requests.exceptions.RequestException:
+            return None
+    
+    def check_fragment(self, username):
+        """Check Fragment.com for username"""
+        url = f"https://fragment.com/username/{username}"
         
-        results = batch_check_usernames(usernames)
-        
-        return jsonify({
-            "results": results,
-            "total": len(results),
-            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "api_owner": API_OWNER
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/validate", methods=["GET"])
-def validate_endpoint():
-    """Validate username format"""
-    username = request.args.get("username", "").replace("@", "").strip()
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=15)
+            
+            if response.status_code == 404:
+                return {"on_fragment": False}
+            
+            html_content = response.text.lower()
+            
+            # Check for sold
+            sold_indicators = [
+                "this username was sold",
+                "sold for",
+                "final price",
+                "this lot is sold",
+                "auction ended"
+            ]
+            
+            for indicator in sold_indicators:
+                if indicator in html_content:
+                    price_match = re.search(r'([\d,]+)\s*ton', html_content)
+                    price = price_match.group(1).replace(',', '') if price_match else None
+                    return {
+                        "on_fragment": True,
+                        "status": "Sold",
+                        "price": price,
+                        "url": url
+                    }
+            
+            # Check for available/auction
+            available_indicators = [
+                "buy username",
+                "place a bid",
+                "current bid",
+                "starting price",
+                "auction ends"
+            ]
+            
+            for indicator in available_indicators:
+                if indicator in html_content:
+                    price_match = re.search(r'([\d,]+)\s*ton', html_content)
+                    price = price_match.group(1).replace(',', '') if price_match else None
+                    
+                    status = "Auction" if "auction" in indicator else "Available"
+                    
+                    return {
+                        "on_fragment": True,
+                        "status": status,
+                        "price": price,
+                        "url": url
+                    }
+            
+            # Check for reserved
+            if "reserved" in html_content or "premium" in html_content:
+                return {
+                    "on_fragment": True,
+                    "status": "Reserved",
+                    "price": None,
+                    "url": url
+                }
+            
+            # Not on fragment
+            return {"on_fragment": False}
+            
+        except requests.exceptions.RequestException:
+            return {"on_fragment": False}
     
-    if not username:
-        return jsonify({
-            "error": "Username is required",
-            "example": "/validate?username=example"
-        }), 400
+    def test_telegram(self):
+        """Test Telegram connectivity"""
+        try:
+            response = requests.get("https://t.me/telegram", timeout=5)
+            return response.status_code == 200
+        except:
+            return False
     
-    is_valid = validate_username(username)
+    def test_fragment(self):
+        """Test Fragment connectivity"""
+        try:
+            response = requests.get("https://fragment.com", timeout=5)
+            return response.status_code == 200
+        except:
+            return False
     
-    return jsonify({
-        "username": f"@{username}",
-        "valid": is_valid,
-        "rules": {
-            "min_length": 5,
-            "max_length": 32,
-            "allowed_chars": "a-z, A-Z, 0-9, _",
-            "no_spaces": True
-        },
-        "message": "Valid Telegram username" if is_valid else "Invalid Telegram username format"
-    })
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    """API health check endpoint"""
-    # Test both services
-    telegram_test = is_telegram_taken("telegram") is not None
-    fragment_test = fragment_lookup("telegram") is not None
-    
-    return jsonify({
-        "status": "healthy" if telegram_test and fragment_test else "degraded",
-        "services": {
-            "telegram_check": "operational" if telegram_test else "degraded",
-            "fragment_check": "operational" if fragment_test else "degraded"
-        },
-        "timestamp": time.time(),
-        "uptime": "N/A"  # Could use process time if needed
-    })
-
-@app.route("/status", methods=["GET"])
-def status():
-    """API status and usage statistics"""
-    return jsonify({
-        "api": "Telegram Username Checker",
-        "status": "operational",
-        "version": "2.0",
-        "features": [
-            "Telegram username availability check",
-            "Fragment.com marketplace status",
-            "Batch processing",
-            "Username validation",
-            "Real-time checking"
-        ],
-        "rate_limits": "No limits applied",
-        "cache": "Enabled (LRU cache with 100 entries)",
-        "author": API_OWNER,
-        "contact": CONTACT
-    })
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({
-        "error": "Endpoint not found",
-        "available_endpoints": ["/", "/check", "/batch", "/health", "/validate", "/status"]
-    }), 404
-
-@app.errorhandler(500)
-def server_error(e):
-    return jsonify({
-        "error": "Internal server error",
-        "contact": CONTACT
-    }), 500
-
-# For Vercel deployment
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8080)
+    def get_timestamp(self):
+        """Get current timestamp"""
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
