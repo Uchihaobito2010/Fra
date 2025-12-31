@@ -1,7 +1,8 @@
 {
   "functions": {
-    "api/*.py": {
-      "runtime": "python3.9"
+    "api/app.py": {
+      "runtime": "python@3.11",
+      "maxDuration": 10
     }
   },
   "rewrites": [
@@ -14,9 +15,18 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type"
+        }
       ]
     }
   ]
