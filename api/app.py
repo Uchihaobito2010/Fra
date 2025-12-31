@@ -52,42 +52,55 @@ def fragment_lookup(username):
         except:
             return None
 
-    # 1️⃣ Auction listings
+    # 1️⃣ Auction
     html = call_fragment("searchAuctions")
 
-    # 2️⃣ Direct / premium sale listings
+    # 2️⃣ Direct / premium
     if not html:
         html = call_fragment("searchUsernames")
 
-    # 3️⃣ Truly not listed
-    if not html:
+    # 3️⃣ Parse if HTML exists
+    if html:
+        lower = html.lower()
+
+        price = None
+        m = re.search(r'([\d,]+)\s*ton', lower)
+        if m:
+            price = float(m.group(1).replace(",", ""))
+
+        status = "Sold" if "sold" in lower else "Available"
+
         return {
-            "on_fragment": False,
-            "status": "Not listed",
-            "price_ton": None
+            "on_fragment": True,
+            "status": status,
+            "price_ton": price,
+            "fragment_url": f"https://fragment.com/username/{username}"
         }
 
-    lower = html.lower()
+    # 4️⃣ FINAL FALLBACK — check Fragment page existence
+    try:
+        page = requests.get(
+            f"https://fragment.com/username/{username}",
+            headers=HEADERS,
+            timeout=8
+        )
+        if page.status_code == 200:
+            # Page exists → premium / hidden listing
+            return {
+                "on_fragment": True,
+                "status": "Available (Premium)",
+                "price_ton": None,
+                "fragment_url": f"https://fragment.com/username/{username}"
+            }
+    except:
+        pass
 
-    # PRICE
-    price = None
-    m = re.search(r'([\d,]+)\s*ton', lower)
-    if m:
-        price = float(m.group(1).replace(",", ""))
-
-    # STATUS
-    if "sold" in lower:
-        status = "Sold"
-    else:
-        status = "Available"
-
+    # 5️⃣ Truly not listed
     return {
-        "on_fragment": True,
-        "status": status,
-        "price_ton": price,
-        "fragment_url": f"https://fragment.com/username/{username}"
+        "on_fragment": False,
+        "status": "Not listed",
+        "price_ton": None
     }
-
 
 # ================== API INFO ==================
 @app.route("/api")
