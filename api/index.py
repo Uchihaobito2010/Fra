@@ -6,21 +6,21 @@ from fastapi import FastAPI, HTTPException, Query
 
 app = FastAPI()
 
-# ================== HEADERS ==================
+# ================= HEADERS =================
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Referer": "https://fragment.com/",
     "Accept": "application/json"
 }
 
-# ================== CREDITS ==================
+# ================= CREDITS =================
 DEVELOPER = "Paras chourasiya"
 CONTACT = "https://t.me/Aotpy"
 PORTFOLIO = "https://Aotpy.netlify.app"
-CHANNEL = "@obitostuffs / @obitoapi"
+CHANNEL = "Obito | Tobi Tools"
 
 
-# ================== GET FRAGMENT API HASH ==================
+# ================= GET FRAGMENT API =================
 def get_fragment_api():
     try:
         r = requests.get("https://fragment.com", headers=HEADERS, timeout=15)
@@ -37,11 +37,16 @@ def get_fragment_api():
         return None
 
 
-# ================== CHECK USERNAME ==================
-def check_fragment_username(username: str, retries=3):
+# ================= FRAGMENT CHECK =================
+def check_fragment_username(username: str, retries=2):
     api_url = get_fragment_api()
     if not api_url:
-        return {"error": "Failed to fetch Fragment API hash"}
+        return {
+            "username": f"@{username}",
+            "price": None,
+            "status": "Fragment unreachable",
+            "available": False
+        }
 
     payload = {
         "type": "usernames",
@@ -56,17 +61,35 @@ def check_fragment_username(username: str, retries=3):
         if retries > 0:
             time.sleep(2)
             return check_fragment_username(username, retries - 1)
-        return {"error": "Fragment API request failed"}
+        return {
+            "username": f"@{username}",
+            "price": None,
+            "status": "Fragment request failed",
+            "available": False
+        }
 
     html = data.get("html")
+
+    # ✅ IMPORTANT FIX: Empty HTML = Not listed
     if not html:
-        return {"error": "No data returned from Fragment"}
+        return {
+            "username": f"@{username}",
+            "price": None,
+            "status": "Not listed on Fragment",
+            "available": True
+        }
 
     soup = BeautifulSoup(html, "html.parser")
     values = soup.find_all("div", class_="tm-value")
 
+    # Safety fallback
     if len(values) < 3:
-        return {"error": "Incomplete Fragment response"}
+        return {
+            "username": f"@{username}",
+            "price": None,
+            "status": "Unknown Fragment response",
+            "available": False
+        }
 
     tag = values[0].get_text(strip=True)
     price = values[1].get_text(strip=True)
@@ -82,7 +105,7 @@ def check_fragment_username(username: str, retries=3):
     }
 
 
-# ================== ROOT ==================
+# ================= ROOT =================
 @app.get("/")
 async def root():
     return {
@@ -96,7 +119,7 @@ async def root():
     }
 
 
-# ================== MAIN ENDPOINT ==================
+# ================= MAIN ENDPOINT =================
 @app.get("/username")
 async def check_username(username: str = Query(..., min_length=1)):
     username = username.strip().lower()
@@ -104,9 +127,6 @@ async def check_username(username: str = Query(..., min_length=1)):
         raise HTTPException(status_code=400, detail="username is required")
 
     result = check_fragment_username(username)
-
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
 
     return {
         "developer": DEVELOPER,
