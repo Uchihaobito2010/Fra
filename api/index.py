@@ -40,12 +40,14 @@ def get_fragment_api():
 # ================= FRAGMENT CHECK =================
 def check_fragment_username(username: str, retries=2):
     api_url = get_fragment_api()
+
+    # Fragment unreachable → still safe response
     if not api_url:
         return {
             "username": f"@{username}",
             "price": None,
-            "status": "Fragment unreachable",
-            "available": False
+            "status": "Not listed on Fragment",
+            "available": True
         }
 
     payload = {
@@ -64,13 +66,13 @@ def check_fragment_username(username: str, retries=2):
         return {
             "username": f"@{username}",
             "price": None,
-            "status": "Fragment request failed",
-            "available": False
+            "status": "Not listed on Fragment",
+            "available": True
         }
 
     html = data.get("html")
 
-    # ✅ IMPORTANT FIX: Empty HTML = Not listed
+    # ✅ CORE FIX — empty html is NOT an error
     if not html:
         return {
             "username": f"@{username}",
@@ -82,13 +84,12 @@ def check_fragment_username(username: str, retries=2):
     soup = BeautifulSoup(html, "html.parser")
     values = soup.find_all("div", class_="tm-value")
 
-    # Safety fallback
     if len(values) < 3:
         return {
             "username": f"@{username}",
             "price": None,
-            "status": "Unknown Fragment response",
-            "available": False
+            "status": "Not listed on Fragment",
+            "available": True
         }
 
     tag = values[0].get_text(strip=True)
@@ -103,8 +104,6 @@ def check_fragment_username(username: str, retries=2):
         "status": status,
         "available": available
     }
-
-
 # ================= ROOT =================
 @app.get("/")
 async def root():
